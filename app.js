@@ -13,12 +13,10 @@ function todayISO() {
   const d = new Date();
   return d.toISOString().split("T")[0];
 }
-
 function fmtDate(d) {
   if (!d) return "";
   return new Date(d + "T00:00:00").toLocaleDateString();
 }
-
 function daysUntil(dateStr) {
   const now = new Date();
   const due = new Date(dateStr + "T00:00:00");
@@ -51,62 +49,33 @@ async function logout() {
   selectedVehicleId = null;
   $("selectedVehicle").textContent = "Select a vehicle to view details.";
   $("vehicleDetails").style.display = "none";
-  refreshAll();
+  await refreshAll();
 }
 
-$("btnLogin").onclick = login;
-$("btnLogout").onclick = logout;
-
-supabase.auth.onAuthStateChange((_event, session) => {
-  setAuthButtons(!!session);
-  refreshAll();
-});
-
-// ===== VEHICLES =====
-async function refreshAll() {
-  await loadVehicles();
-  await loadDashboard();
-  if (selectedVehicleId) await loadVehicleDetails(selectedVehicleId);
-}
-
-$("vehicleForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const f = e.target;
-
-  const payload = {
-    name: f.name.value.trim(),
-    type: f.type.value.trim(),
-    current_odometer: Number(f.current_odometer.value || 0),
-    current_engine_hours: Number(f.current_engine_hours.value || 0)
-  };
-
-  const { error } = await supabase.from("vehicles").insert(payload);
-  if (error) return alert(error.message);
-
-  f.reset();
-  refreshAll();
-});
-
+// ===== DATA LOADERS =====
 async function loadVehicles() {
   const { data, error } = await supabase
     .from("vehicles")
     .select("*")
-    .order("created_at");
+    .order("created_at", { ascending: true });
 
-  if (error) return ($("vehicles").textContent = error.message);
+  if (error) {
+    $("vehicles").innerHTML = `<div class="muted">${error.message}</div>`;
+    return;
+  }
 
   const wrap = document.createElement("div");
   wrap.className = "list";
 
-  (data || []).forEach(v => {
+  (data || []).forEach((v) => {
     const el = document.createElement("div");
     el.className = "item";
     el.innerHTML = `
       <div>
-        <b>${v.name}</b> <span class="badge">${v.type}</span>
-        <div class="muted">Miles: ${v.current_odometer} | Hours: ${v.current_engine_hours}</div>
+        <div><b>${v.name}</b> <span class="badge">${v.type}</span></div>
+        <div class="muted">Miles: ${v.current_odometer ?? 0} • Hours: ${v.current_engine_hours ?? 0}</div>
       </div>
-      <button class="secondary">Open</button>
+      <div><button class="secondary">Open</button></div>
     `;
     el.querySelector("button").onclick = () => loadVehicleDetails(v.id);
     wrap.appendChild(el);
@@ -116,109 +85,71 @@ async function loadVehicles() {
   $("vehicles").appendChild(wrap);
 }
 
-async function loadVehicleDetails(vehicleId) {
-  selectedVehicleId = vehicleId;
-
-  const { data: v } = await supabase
-    .from("vehicles")
-    .select("*")
-    .eq("id", vehicleId)
-    .single();
-
-  $("selectedVehicle").innerHTML = `
-    <b>${v.name}</b> <span class="badge">${v.type}</span>
-    <div class="muted">Miles: ${v.current_odometer} | Hours: ${v.current_engine_hours}</div>
-  `;
-  $("vehicleDetails").style.display = "block";
-
-  $("btnUpdateMiles").onclick = async () => {
-    const miles = Number(prompt("Current miles:", v.current_odometer));
-    const hours = Number(prompt("Engine hours:", v.current_engine_hours));
-    if (isNaN(miles) || isNaN(hours)) return;
-
-    await supabase.from("vehicles").update({
-      current_odometer: miles,
-      current_engine_hours: hours
-    }).eq("id", vehicleId);
-
-    refreshAll();
-  };
-
-  $("btnAddService").onclick = async () => {
-    const category = prompt("Service type (Oil, Brakes, DOT, etc)");
-    const desc = prompt("What was done?");
-    if (!category || !desc) return;
-
-    await supabase.from("services").insert({
-      vehicle_id: vehicleId,
-      service_date: todayISO(),
-      category,
-      description: desc,
-      odometer: v.current_odometer,
-      engine_hours: v.current_engine_hours
-    });
-
-    loadServices(vehicleId);
-  };
-
-  $("btnAddReminder").onclick = async () => {
-    const name = prompt("Reminder name (Insurance, DOT, Oil Change)");
-    const type = prompt("Type: date / miles / hours");
-    if (!name || !type) return;
-
-    let payload = { vehicle_id: vehicleId, name, reminder_type: type };
-
-    if (type === "date") payload.due_date = prompt("Due date (YYYY-MM-DD):", todayISO());
-    if (type === "miles") payload.due_odometer = Number(prompt("Due miles:"));
-    if (type === "hours") payload.due_engine_hours = Number(prompt("Due hours:"));
-
-    await supabase.from("reminders").insert(payload);
-    loadReminders(vehicleId);
-  };
-
-  loadServices(vehicleId);
-  loadReminders(vehicleId);
-}
-
 async function loadServices(vehicleId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("services")
     .select("*")
     .eq("vehicle_id", vehicleId)
     .order("service_date", { ascending: false });
 
+  if (error) {
+    $("services").innerHTML = `<div class="muted">${error.message}</div>`;
+    return;
+  }
+
   $("services").innerHTML = (data || []).map(s => `
     <div class="item">
-      <b>${s.category}</b> – ${fmtDate(s.service_date)}
-      <div class="muted">${s.description}</div>
+      <div>
+        <div><b>${s.category}</b> <span class="badge">${fmtDate(s.service_date)}</span></div>
+        <div>${s.description}</div>
+        <div class="muted">Miles: ${s.odometer ?? "-"} • Hours: ${s.engine_hours ?? "-"}</div>
+      </div>
     </div>
   `).join("");
 }
 
 async function loadReminders(vehicleId) {
-  const { data: v } = await supabase.from("vehicles").select("*").eq("id", vehicleId).single();
-  const { data } = await supabase.from("reminders").select("*").eq("vehicle_id", vehicleId);
+  const { data: v, error: vErr } = await supabase
+    .from("vehicles").select("*").eq("id", vehicleId).single();
+  if (vErr) {
+    $("reminders").innerHTML = `<div class="muted">${vErr.message}</div>`;
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("reminders")
+    .select("*")
+    .eq("vehicle_id", vehicleId);
+
+  if (error) {
+    $("reminders").innerHTML = `<div class="muted">${error.message}</div>`;
+    return;
+  }
 
   $("reminders").innerHTML = (data || []).map(r => {
     let status = "OK";
-    if (r.reminder_type === "date" && r.due_date && daysUntil(r.due_date) <= 0) status = "DUE";
-    if (r.reminder_type === "miles" && r.due_odometer <= v.current_odometer) status = "DUE";
-    if (r.reminder_type === "hours" && r.due_engine_hours <= v.current_engine_hours) status = "DUE";
+    let cls = "badge";
+    let detail = "";
 
-    return `<div class="item"><b>${r.name}</b> – ${status}</div>`;
-  }).join("");
-}
+    if (r.reminder_type === "date" && r.due_date) {
+      const d = daysUntil(r.due_date);
+      detail = `Due: ${fmtDate(r.due_date)} (${d} days)`;
+      if (d <= 0) { status = "DUE"; cls += " red"; }
+      else if (d <= (r.warn_days ?? 30)) { status = "SOON"; cls += " yellow"; }
+    }
 
-async function loadDashboard() {
-  const { data: { session } } = await supabase.auth.getSession();
-  $("dashboard").innerHTML = session
-    ? "<div class='muted'>Logged in. Manage vehicles and reminders.</div>"
-    : "<div class='muted'>Login to see reminders.</div>";
-}
+    if (r.reminder_type === "miles" && r.due_odometer != null) {
+      const left = r.due_odometer - (v.current_odometer ?? 0);
+      detail = `Due at: ${r.due_odometer} (left: ${left})`;
+      if (left <= 0) { status = "DUE"; cls += " red"; }
+      else if (left <= (r.warn_miles ?? 500)) { status = "SOON"; cls += " yellow"; }
+    }
 
-// ===== INIT =====
-(async function init() {
-  const { data: { session } } = await supabase.auth.getSession();
-  setAuthButtons(!!session);
-  refreshAll();
-})();
+    if (r.reminder_type === "hours" && r.due_engine_hours != null) {
+      const left = r.due_engine_hours - (v.current_engine_hours ?? 0);
+      detail = `Due at: ${r.due_engine_hours} hrs (left: ${left})`;
+      if (left <= 0) { status = "DUE"; cls += " red"; }
+      else if (left <= (r.warn_hours ?? 25)) { status = "SOON"; cls += " yellow"; }
+    }
+
+    return
