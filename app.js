@@ -56,7 +56,7 @@ async function logout() {
 async function loadDashboard() {
   const { data: { session } } = await supabase.auth.getSession();
   $("dashboard").innerHTML = session
-    ? "<div class='muted'>Logged in. Add reminders to track due items.</div>"
+    ? "<div class='muted'>Logged in. Add vehicles/reminders to track due items.</div>"
     : "<div class='muted'>Login to see reminders.</div>";
 }
 
@@ -91,6 +91,80 @@ async function loadVehicles() {
 
   $("vehicles").innerHTML = "";
   $("vehicles").appendChild(wrap);
+}
+
+// ===== SERVICES / REMINDERS =====
+async function loadServices(vehicleId) {
+  const { data, error } = await supabase
+    .from("services")
+    .select("*")
+    .eq("vehicle_id", vehicleId)
+    .order("service_date", { ascending: false });
+
+  if (error) {
+    $("services").innerHTML = `<div class="muted">${error.message}</div>`;
+    return;
+  }
+
+  $("services").innerHTML = (data || []).map(s => `
+    <div class="item">
+      <div>
+        <div><b>${s.category}</b> <span class="badge">${fmtDate(s.service_date)}</span></div>
+        <div>${s.description}</div>
+        <div class="muted">Miles: ${s.odometer ?? "-"} • Hours: ${s.engine_hours ?? "-"}</div>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function loadReminders(vehicleId) {
+  const { data: v, error: vErr } = await supabase.from("vehicles").select("*").eq("id", vehicleId).single();
+  if (vErr) {
+    $("reminders").innerHTML = `<div class="muted">${vErr.message}</div>`;
+    return;
+  }
+
+  const { data, error } = await supabase.from("reminders").select("*").eq("vehicle_id", vehicleId);
+  if (error) {
+    $("reminders").innerHTML = `<div class="muted">${error.message}</div>`;
+    return;
+  }
+
+  $("reminders").innerHTML = (data || []).map(r => {
+    let status = "OK";
+    let cls = "badge";
+    let detail = "";
+
+    if (r.reminder_type === "date" && r.due_date) {
+      const d = daysUntil(r.due_date);
+      detail = `Due: ${fmtDate(r.due_date)} (${d} days)`;
+      if (d <= 0) { status = "DUE"; cls += " red"; }
+      else if (d <= (r.warn_days ?? 30)) { status = "SOON"; cls += " yellow"; }
+    }
+
+    if (r.reminder_type === "miles" && r.due_odometer != null) {
+      const left = r.due_odometer - (v.current_odometer ?? 0);
+      detail = `Due at: ${r.due_odometer} (left: ${left})`;
+      if (left <= 0) { status = "DUE"; cls += " red"; }
+      else if (left <= (r.warn_miles ?? 500)) { status = "SOON"; cls += " yellow"; }
+    }
+
+    if (r.reminder_type === "hours" && r.due_engine_hours != null) {
+      const left = r.due_engine_hours - (v.current_engine_hours ?? 0);
+      detail = `Due at: ${r.due_engine_hours} hrs (left: ${left})`;
+      if (left <= 0) { status = "DUE"; cls += " red"; }
+      else if (left <= (r.warn_hours ?? 25)) { status = "SOON"; cls += " yellow"; }
+    }
+
+    return `
+      <div class="item">
+        <div>
+          <div><b>${r.name}</b> <span class="${cls}">${status}</span></div>
+          <div class="muted">${r.reminder_type.toUpperCase()} • ${detail}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 // ===== VEHICLE DETAILS =====
@@ -198,84 +272,27 @@ async function loadVehicleDetails(vehicleId) {
     if (error) return alert(error.message);
 
     await loadReminders(vehicleId);
+    await loadDashboard();
+  };
+
+  // ✅ DELETE VEHICLE BUTTON
+  $("btnDeleteVehicle").onclick = async () => {
+    const ok = confirm(`Delete vehicle "${v.name}"? This will also delete its services and reminders.`);
+    if (!ok) return;
+
+    const { error } = await supabase.from("vehicles").delete().eq("id", vehicleId);
+    if (error) return alert(error.message);
+
+    selectedVehicleId = null;
+    $("selectedVehicle").textContent = "Select a vehicle to view details.";
+    $("vehicleDetails").style.display = "none";
+
+    await refreshAll();
+    alert("Vehicle deleted.");
   };
 
   await loadServices(vehicleId);
   await loadReminders(vehicleId);
-}
-
-// ===== SERVICES / REMINDERS =====
-async function loadServices(vehicleId) {
-  const { data, error } = await supabase
-    .from("services")
-    .select("*")
-    .eq("vehicle_id", vehicleId)
-    .order("service_date", { ascending: false });
-
-  if (error) {
-    $("services").innerHTML = `<div class="muted">${error.message}</div>`;
-    return;
-  }
-
-  $("services").innerHTML = (data || []).map(s => `
-    <div class="item">
-      <div>
-        <div><b>${s.category}</b> <span class="badge">${fmtDate(s.service_date)}</span></div>
-        <div>${s.description}</div>
-        <div class="muted">Miles: ${s.odometer ?? "-"} • Hours: ${s.engine_hours ?? "-"}</div>
-      </div>
-    </div>
-  `).join("");
-}
-
-async function loadReminders(vehicleId) {
-  const { data: v, error: vErr } = await supabase.from("vehicles").select("*").eq("id", vehicleId).single();
-  if (vErr) {
-    $("reminders").innerHTML = `<div class="muted">${vErr.message}</div>`;
-    return;
-  }
-
-  const { data, error } = await supabase.from("reminders").select("*").eq("vehicle_id", vehicleId);
-  if (error) {
-    $("reminders").innerHTML = `<div class="muted">${error.message}</div>`;
-    return;
-  }
-
-  $("reminders").innerHTML = (data || []).map(r => {
-    let status = "OK";
-    let cls = "badge";
-    let detail = "";
-
-    if (r.reminder_type === "date" && r.due_date) {
-      const d = daysUntil(r.due_date);
-      detail = `Due: ${fmtDate(r.due_date)} (${d} days)`;
-      if (d <= 0) { status = "DUE"; cls += " red"; }
-      else if (d <= (r.warn_days ?? 30)) { status = "SOON"; cls += " yellow"; }
-    }
-
-    if (r.reminder_type === "miles" && r.due_odometer != null) {
-      const left = r.due_odometer - (v.current_odometer ?? 0);
-      detail = `Due at: ${r.due_odometer} (left: ${left})`;
-      if (left <= 0) { status = "DUE"; cls += " red"; }
-      else if (left <= (r.warn_miles ?? 500)) { status = "SOON"; cls += " yellow"; }
-    }
-
-    if (r.reminder_type === "hours" && r.due_engine_hours != null) {
-      const left = r.due_engine_hours - (v.current_engine_hours ?? 0);
-      detail = `Due at: ${r.due_engine_hours} hrs (left: ${left})`;
-      if (left <= 0) { status = "DUE"; cls += " red"; }
-      else if (left <= (r.warn_hours ?? 25)) { status = "SOON"; cls += " yellow"; }
-    }
-
-    return `
-      <div class="item">
-        <div>
-          <div><b>${r.name}</b> <span class="${cls}">${status}</span></div>
-          <div class="muted">${r.reminder_type.toUpperCase()} • ${detail}</div>
-        </div>
-      </div>
-    `;
-  }).join("");
 }
 
 // ===== REFRESH =====
