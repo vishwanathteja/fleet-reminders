@@ -9,10 +9,16 @@
 <body>
   <header class="header">
     <h1>Fleet Service & Reminders</h1>
-    <div class="row">
-      <button id="btnLogin">Login</button>
+
+    <div class="row wrap" style="gap:10px;">
+      <input id="authEmail" placeholder="Email" />
+      <input id="authPassword" type="password" placeholder="Password" />
+      <button id="btnSignUp">Sign Up</button>
+      <button id="btnSignIn">Sign In</button>
       <button id="btnLogout" class="secondary" style="display:none;">Logout</button>
     </div>
+
+    <div id="authStatus" class="muted"></div>
   </header>
 
   <main class="container">
