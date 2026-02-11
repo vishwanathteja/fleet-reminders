@@ -10,7 +10,7 @@
   <header class="header">
     <h1>Fleet Service & Reminders</h1>
 
-    <div class="row wrap" style="gap:10px;">
+    <div id="authBox" class="row wrap" style="gap:10px;">
       <input id="authEmail" placeholder="Email" />
       <input id="authPassword" type="password" placeholder="Password" />
       <button id="btnSignUp">Sign Up</button>
@@ -22,6 +22,18 @@
   </header>
 
   <main class="container">
+
+    <!-- RESET PASSWORD UI -->
+    <section id="resetBox" class="card" style="display:none;">
+      <h2>Reset Password</h2>
+      <p class="muted">Enter a new password for your account.</p>
+      <div class="row wrap" style="gap:10px;">
+        <input id="newPassword" type="password" placeholder="New password" />
+        <button id="btnUpdatePassword">Update Password</button>
+      </div>
+      <div id="resetStatus" class="muted"></div>
+    </section>
+
     <section class="card">
       <h2>Dashboard</h2>
       <p class="muted">Due Now / Due Soon</p>
