@@ -36,8 +36,8 @@ async function login() {
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: {
-      emailRedirectTo: "https://vishwanathteja.github.io/fleet-reminders/"
-    }
+      emailRedirectTo: "https://vishwanathteja.github.io/fleet-reminders/",
+    },
   });
 
   if (error) alert(error.message);
@@ -54,7 +54,10 @@ async function logout() {
 
 // ===== DASHBOARD =====
 async function loadDashboard() {
-  const { data: { session } } = await supabase.auth.getSession();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
   $("dashboard").innerHTML = session
     ? "<div class='muted'>Logged in. Add vehicles/reminders to track due items.</div>"
     : "<div class='muted'>Login to see reminders.</div>";
@@ -93,6 +96,29 @@ async function loadVehicles() {
   $("vehicles").appendChild(wrap);
 }
 
+// ===== DELETE HELPERS =====
+async function deleteService(serviceId) {
+  const ok = confirm("Delete this service record?");
+  if (!ok) return;
+
+  const { error } = await supabase.from("services").delete().eq("id", serviceId);
+  if (error) return alert(error.message);
+
+  if (selectedVehicleId) await loadServices(selectedVehicleId);
+  alert("Service record deleted.");
+}
+
+async function deleteReminder(reminderId) {
+  const ok = confirm("Delete this reminder?");
+  if (!ok) return;
+
+  const { error } = await supabase.from("reminders").delete().eq("id", reminderId);
+  if (error) return alert(error.message);
+
+  if (selectedVehicleId) await loadReminders(selectedVehicleId);
+  alert("Reminder deleted.");
+}
+
 // ===== SERVICES / REMINDERS =====
 async function loadServices(vehicleId) {
   const { data, error } = await supabase
@@ -106,31 +132,59 @@ async function loadServices(vehicleId) {
     return;
   }
 
-  $("services").innerHTML = (data || []).map(s => `
-    <div class="item">
+  // Build DOM so we can attach delete handlers safely
+  const wrap = document.createElement("div");
+  wrap.className = "list";
+
+  (data || []).forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "item";
+
+    row.innerHTML = `
       <div>
         <div><b>${s.category}</b> <span class="badge">${fmtDate(s.service_date)}</span></div>
         <div>${s.description}</div>
         <div class="muted">Miles: ${s.odometer ?? "-"} • Hours: ${s.engine_hours ?? "-"}</div>
       </div>
-    </div>
-  `).join("");
+      <div>
+        <button class="secondary" data-del-service="${s.id}">Delete</button>
+      </div>
+    `;
+
+    row.querySelector(`[data-del-service="${s.id}"]`).onclick = () => deleteService(s.id);
+    wrap.appendChild(row);
+  });
+
+  $("services").innerHTML = "";
+  $("services").appendChild(wrap);
 }
 
 async function loadReminders(vehicleId) {
-  const { data: v, error: vErr } = await supabase.from("vehicles").select("*").eq("id", vehicleId).single();
+  const { data: v, error: vErr } = await supabase
+    .from("vehicles")
+    .select("*")
+    .eq("id", vehicleId)
+    .single();
+
   if (vErr) {
     $("reminders").innerHTML = `<div class="muted">${vErr.message}</div>`;
     return;
   }
 
-  const { data, error } = await supabase.from("reminders").select("*").eq("vehicle_id", vehicleId);
+  const { data, error } = await supabase
+    .from("reminders")
+    .select("*")
+    .eq("vehicle_id", vehicleId);
+
   if (error) {
     $("reminders").innerHTML = `<div class="muted">${error.message}</div>`;
     return;
   }
 
-  $("reminders").innerHTML = (data || []).map(r => {
+  const wrap = document.createElement("div");
+  wrap.className = "list";
+
+  (data || []).forEach((r) => {
     let status = "OK";
     let cls = "badge";
     let detail = "";
@@ -138,33 +192,57 @@ async function loadReminders(vehicleId) {
     if (r.reminder_type === "date" && r.due_date) {
       const d = daysUntil(r.due_date);
       detail = `Due: ${fmtDate(r.due_date)} (${d} days)`;
-      if (d <= 0) { status = "DUE"; cls += " red"; }
-      else if (d <= (r.warn_days ?? 30)) { status = "SOON"; cls += " yellow"; }
+      if (d <= 0) {
+        status = "DUE";
+        cls += " red";
+      } else if (d <= (r.warn_days ?? 30)) {
+        status = "SOON";
+        cls += " yellow";
+      }
     }
 
     if (r.reminder_type === "miles" && r.due_odometer != null) {
       const left = r.due_odometer - (v.current_odometer ?? 0);
       detail = `Due at: ${r.due_odometer} (left: ${left})`;
-      if (left <= 0) { status = "DUE"; cls += " red"; }
-      else if (left <= (r.warn_miles ?? 500)) { status = "SOON"; cls += " yellow"; }
+      if (left <= 0) {
+        status = "DUE";
+        cls += " red";
+      } else if (left <= (r.warn_miles ?? 500)) {
+        status = "SOON";
+        cls += " yellow";
+      }
     }
 
     if (r.reminder_type === "hours" && r.due_engine_hours != null) {
       const left = r.due_engine_hours - (v.current_engine_hours ?? 0);
       detail = `Due at: ${r.due_engine_hours} hrs (left: ${left})`;
-      if (left <= 0) { status = "DUE"; cls += " red"; }
-      else if (left <= (r.warn_hours ?? 25)) { status = "SOON"; cls += " yellow"; }
+      if (left <= 0) {
+        status = "DUE";
+        cls += " red";
+      } else if (left <= (r.warn_hours ?? 25)) {
+        status = "SOON";
+        cls += " yellow";
+      }
     }
 
-    return `
-      <div class="item">
-        <div>
-          <div><b>${r.name}</b> <span class="${cls}">${status}</span></div>
-          <div class="muted">${r.reminder_type.toUpperCase()} • ${detail}</div>
-        </div>
+    const row = document.createElement("div");
+    row.className = "item";
+    row.innerHTML = `
+      <div>
+        <div><b>${r.name}</b> <span class="${cls}">${status}</span></div>
+        <div class="muted">${r.reminder_type.toUpperCase()} • ${detail}</div>
+      </div>
+      <div>
+        <button class="secondary" data-del-reminder="${r.id}">Delete</button>
       </div>
     `;
-  }).join("");
+
+    row.querySelector(`[data-del-reminder="${r.id}"]`).onclick = () => deleteReminder(r.id);
+    wrap.appendChild(row);
+  });
+
+  $("reminders").innerHTML = "";
+  $("reminders").appendChild(wrap);
 }
 
 // ===== VEHICLE DETAILS =====
@@ -198,10 +276,13 @@ async function loadVehicleDetails(vehicleId) {
     if (Number.isNaN(newMiles) || newMiles < 0) return alert("Miles must be a number >= 0.");
     if (!Number.isNaN(newHours) && newHours < 0) return alert("Hours must be >= 0.");
 
-    const { error } = await supabase.from("vehicles").update({
-      current_odometer: newMiles,
-      current_engine_hours: Number.isNaN(newHours) ? v.current_engine_hours : newHours
-    }).eq("id", vehicleId);
+    const { error } = await supabase
+      .from("vehicles")
+      .update({
+        current_odometer: newMiles,
+        current_engine_hours: Number.isNaN(newHours) ? v.current_engine_hours : newHours,
+      })
+      .eq("id", vehicleId);
 
     if (error) return alert(error.message);
 
@@ -228,7 +309,7 @@ async function loadVehicleDetails(vehicleId) {
       category,
       description,
       odometer: Number.isNaN(odometer) ? null : odometer,
-      engine_hours: Number.isNaN(engine_hours) ? null : engine_hours
+      engine_hours: Number.isNaN(engine_hours) ? null : engine_hours,
     };
 
     const { error } = await supabase.from("services").insert(payload);
@@ -242,9 +323,12 @@ async function loadVehicleDetails(vehicleId) {
     if (!name) return;
 
     const reminder_type = (prompt("Type: date OR miles OR hours", "date") || "").toLowerCase();
-    if (!["date", "miles", "hours"].includes(reminder_type)) return alert("Type must be: date, miles, or hours");
+    if (!["date", "miles", "hours"].includes(reminder_type))
+      return alert("Type must be: date, miles, or hours");
 
-    let due_date = null, due_odometer = null, due_engine_hours = null;
+    let due_date = null,
+      due_odometer = null,
+      due_engine_hours = null;
 
     if (reminder_type === "date") {
       due_date = prompt("Due date (YYYY-MM-DD):", todayISO());
@@ -265,7 +349,7 @@ async function loadVehicleDetails(vehicleId) {
       reminder_type,
       due_date,
       due_odometer,
-      due_engine_hours
+      due_engine_hours,
     };
 
     const { error } = await supabase.from("reminders").insert(payload);
@@ -275,7 +359,7 @@ async function loadVehicleDetails(vehicleId) {
     await loadDashboard();
   };
 
-  // ✅ DELETE VEHICLE BUTTON
+  // DELETE VEHICLE
   $("btnDeleteVehicle").onclick = async () => {
     const ok = confirm(`Delete vehicle "${v.name}"? This will also delete its services and reminders.`);
     if (!ok) return;
@@ -314,7 +398,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       name: f.name.value.trim(),
       type: f.type.value.trim(),
       current_odometer: Number(f.current_odometer.value || 0),
-      current_engine_hours: Number(f.current_engine_hours.value || 0)
+      current_engine_hours: Number(f.current_engine_hours.value || 0),
     };
 
     const { error } = await supabase.from("vehicles").insert(payload);
@@ -329,7 +413,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     refreshAll();
   });
 
-  const { data: { session } } = await supabase.auth.getSession();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
   setAuthButtons(!!session);
   await refreshAll();
 });
