@@ -1,28 +1,19 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
 
-/* ================= SUPABASE CONFIG ================= */
+// ===== SUPABASE CONFIG =====
 const SUPABASE_URL = "https://vsrdlcafkrubktirwczq.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_NgIiYGeuJFv4x9N9sRrf3A_lRnWdTW9";
 
-/**
- * IMPORTANT:
- * - flowType: "pkce" + exchangeCodeForSession fixes magic-link issues on GitHub Pages
- * - detectSessionInUrl: true allows it to see ?code=...
- */
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,
-    flowType: "pkce",
   },
 });
 
-/* ================= HELPERS ================= */
+// ===== HELPERS =====
 const $ = (id) => document.getElementById(id);
-
 let selectedVehicleId = null;
-let loginCooldown = false;
 
 function todayISO() {
   return new Date().toISOString().split("T")[0];
@@ -37,42 +28,23 @@ function daysUntil(dateStr) {
   return Math.ceil((due - now) / (1000 * 60 * 60 * 24));
 }
 
-/* ================= MAGIC LINK HANDLER (FIX) ================= */
-async function handleMagicLinkCallback() {
-  try {
-    const url = new URL(window.location.href);
-    const code = url.searchParams.get("code");
-    if (!code) return;
-
-    const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-    if (error) {
-      alert("Login failed: " + error.message);
-      return;
-    }
-
-    // Remove ?code=... from URL after successful exchange
-    url.searchParams.delete("code");
-    window.history.replaceState({}, document.title, url.toString());
-  } catch (e) {
-    console.warn("Magic link callback handling error:", e);
-  }
-}
-
-/* ================= AUTH UI ================= */
-function setAuthButtons(isAuthed) {
-  $("btnLogin").style.display = isAuthed ? "none" : "inline-block";
-  $("btnLogout").style.display = isAuthed ? "inline-block" : "none";
-}
-
-async function syncAuthUI() {
+// ===== AUTH (EMAIL + PASSWORD) =====
+async function setAuthUI() {
   const { data: { session } } = await supabase.auth.getSession();
   const isAuthed = !!session;
 
-  setAuthButtons(isAuthed);
+  $("btnLogout").style.display = isAuthed ? "inline-block" : "none";
+  $("btnSignUp").style.display = isAuthed ? "none" : "inline-block";
+  $("btnSignIn").style.display = isAuthed ? "none" : "inline-block";
+  $("authEmail").style.display = isAuthed ? "none" : "inline-block";
+  $("authPassword").style.display = isAuthed ? "none" : "inline-block";
 
-  // Disable add form when logged out
-  const form = $("vehicleForm");
-  form.querySelectorAll("input, button").forEach(el => (el.disabled = !isAuthed));
+  $("authStatus").textContent = isAuthed
+    ? `✅ Logged in as ${session.user.email}`
+    : "❌ Not logged in";
+
+  // Lock form when logged out
+  $("vehicleForm").querySelectorAll("input, button").forEach(el => el.disabled = !isAuthed);
 
   if (!isAuthed) {
     $("vehicles").innerHTML = `<div class="muted">Login to view vehicles.</div>`;
@@ -86,44 +58,36 @@ async function syncAuthUI() {
   return isAuthed;
 }
 
-/* ================= LOGIN / LOGOUT ================= */
-async function login() {
-  if (loginCooldown) {
-    alert("Please wait 30 seconds before trying again (prevents email limit).");
-    return;
-  }
+async function signUp() {
+  const email = $("authEmail").value.trim();
+  const password = $("authPassword").value;
 
-  const email = prompt("Enter your email:");
-  if (!email) return;
+  if (!email || !password) return alert("Enter email and password.");
 
-  loginCooldown = true;
-  $("btnLogin").disabled = true;
+  const { error } = await supabase.auth.signUp({ email, password });
+  if (error) return alert(error.message);
 
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      // keep this EXACT
-      emailRedirectTo: "https://vishwanathteja.github.io/fleet-reminders/",
-    },
-  });
+  alert("Account created. Now click Sign In.");
+}
 
-  if (error) alert(error.message);
-  else alert("Check your email for the login link.");
+async function signIn() {
+  const email = $("authEmail").value.trim();
+  const password = $("authPassword").value;
 
-  setTimeout(() => {
-    loginCooldown = false;
-    $("btnLogin").disabled = false;
-  }, 30000);
+  if (!email || !password) return alert("Enter email and password.");
+
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) return alert(error.message);
+
+  await refreshAll();
 }
 
 async function logout() {
   await supabase.auth.signOut();
-  selectedVehicleId = null;
-  await syncAuthUI();
-  await loadDashboard();
+  await refreshAll();
 }
 
-/* ================= DASHBOARD ================= */
+// ===== DASHBOARD =====
 async function loadDashboard() {
   const { data: { session } } = await supabase.auth.getSession();
   $("dashboard").innerHTML = session
@@ -131,7 +95,7 @@ async function loadDashboard() {
     : "<div class='muted'>Login to see reminders.</div>";
 }
 
-/* ================= VEHICLES ================= */
+// ===== VEHICLES =====
 async function loadVehicles() {
   const { data, error } = await supabase
     .from("vehicles")
@@ -164,28 +128,22 @@ async function loadVehicles() {
   $("vehicles").appendChild(wrap);
 }
 
-/* ================= DELETE HELPERS ================= */
+// ===== DELETE HELPERS =====
 async function deleteService(serviceId) {
-  const ok = confirm("Delete this service record?");
-  if (!ok) return;
-
+  if (!confirm("Delete this service record?")) return;
   const { error } = await supabase.from("services").delete().eq("id", serviceId);
   if (error) return alert(error.message);
-
-  if (selectedVehicleId) await loadServices(selectedVehicleId);
+  await loadServices(selectedVehicleId);
 }
 
 async function deleteReminder(reminderId) {
-  const ok = confirm("Delete this reminder?");
-  if (!ok) return;
-
+  if (!confirm("Delete this reminder?")) return;
   const { error } = await supabase.from("reminders").delete().eq("id", reminderId);
   if (error) return alert(error.message);
-
-  if (selectedVehicleId) await loadReminders(selectedVehicleId);
+  await loadReminders(selectedVehicleId);
 }
 
-/* ================= SERVICES ================= */
+// ===== SERVICES =====
 async function loadServices(vehicleId) {
   const { data, error } = await supabase
     .from("services")
@@ -220,7 +178,7 @@ async function loadServices(vehicleId) {
   $("services").appendChild(wrap);
 }
 
-/* ================= REMINDERS ================= */
+// ===== REMINDERS =====
 async function loadReminders(vehicleId) {
   const { data: v, error: vErr } = await supabase
     .from("vehicles")
@@ -256,14 +214,12 @@ async function loadReminders(vehicleId) {
       if (d <= 0) status = "DUE";
       else if (d <= (r.warn_days ?? 30)) status = "SOON";
     }
-
     if (r.reminder_type === "miles" && r.due_odometer != null) {
       const left = r.due_odometer - (v.current_odometer ?? 0);
       detail = `Due at: ${r.due_odometer} (left: ${left})`;
       if (left <= 0) status = "DUE";
       else if (left <= (r.warn_miles ?? 500)) status = "SOON";
     }
-
     if (r.reminder_type === "hours" && r.due_engine_hours != null) {
       const left = r.due_engine_hours - (v.current_engine_hours ?? 0);
       detail = `Due at: ${r.due_engine_hours} hrs (left: ${left})`;
@@ -288,10 +244,9 @@ async function loadReminders(vehicleId) {
   $("reminders").appendChild(wrap);
 }
 
-/* ================= VEHICLE DETAILS ================= */
+// ===== VEHICLE DETAILS =====
 async function loadVehicleDetails(vehicleId) {
-  const isAuthed = await syncAuthUI();
-  if (!isAuthed) return;
+  if (!(await setAuthUI())) return;
 
   selectedVehicleId = vehicleId;
 
@@ -310,19 +265,13 @@ async function loadVehicleDetails(vehicleId) {
   $("vehicleDetails").style.display = "block";
 
   $("btnUpdateMiles").onclick = async () => {
-    const miles = prompt("Enter current miles (odometer):", String(v.current_odometer ?? 0));
-    if (miles === null) return;
+    const miles = Number(prompt("Miles:", v.current_odometer ?? 0));
+    const hours = Number(prompt("Hours:", v.current_engine_hours ?? 0));
 
-    const hours = prompt("Enter current engine hours (optional):", String(v.current_engine_hours ?? 0));
-    if (hours === null) return;
-
-    const newMiles = Number(miles);
-    const newHours = Number(hours);
-
-    const { error } = await supabase.from("vehicles").update({
-      current_odometer: Number.isNaN(newMiles) ? v.current_odometer : newMiles,
-      current_engine_hours: Number.isNaN(newHours) ? v.current_engine_hours : newHours,
-    }).eq("id", vehicleId);
+    const { error } = await supabase
+      .from("vehicles")
+      .update({ current_odometer: miles, current_engine_hours: hours })
+      .eq("id", vehicleId);
 
     if (error) return alert(error.message);
 
@@ -331,20 +280,11 @@ async function loadVehicleDetails(vehicleId) {
   };
 
   $("btnAddService").onclick = async () => {
-    const service_date = prompt("Service date (YYYY-MM-DD):", todayISO());
-    if (!service_date) return;
-
-    const category = prompt("Category (Oil/Brakes/Tires/PTO/etc):", "Oil");
-    if (!category) return;
-
-    const description = prompt("What was done / what changed?", "");
-    if (!description) return;
-
     const payload = {
       vehicle_id: vehicleId,
-      service_date,
-      category,
-      description,
+      service_date: prompt("Service date (YYYY-MM-DD):", todayISO()),
+      category: prompt("Category (Oil/Brakes/Tires/DOT/etc):", "Oil"),
+      description: prompt("What was done?", ""),
       odometer: v.current_odometer ?? null,
       engine_hours: v.current_engine_hours ?? null,
     };
@@ -357,28 +297,15 @@ async function loadVehicleDetails(vehicleId) {
 
   $("btnAddReminder").onclick = async () => {
     const name = prompt("Reminder name (Insurance/DOT/Oil Change/etc):", "Insurance");
-    if (!name) return;
+    const type = (prompt("Type: date / miles / hours", "date") || "").toLowerCase();
+    if (!["date", "miles", "hours"].includes(type)) return alert("Type must be date/miles/hours");
 
-    const reminder_type = (prompt("Type: date OR miles OR hours", "date") || "").toLowerCase();
-    if (!["date", "miles", "hours"].includes(reminder_type))
-      return alert("Type must be: date, miles, or hours");
+    const payload = { vehicle_id: vehicleId, name, reminder_type: type };
 
-    let due_date = null, due_odometer = null, due_engine_hours = null;
+    if (type === "date") payload.due_date = prompt("Due date (YYYY-MM-DD):", todayISO());
+    if (type === "miles") payload.due_odometer = Number(prompt("Due miles:", String((v.current_odometer ?? 0) + 5000)));
+    if (type === "hours") payload.due_engine_hours = Number(prompt("Due hours:", String((v.current_engine_hours ?? 0) + 200)));
 
-    if (reminder_type === "date") {
-      due_date = prompt("Due date (YYYY-MM-DD):", todayISO());
-      if (!due_date) return;
-    }
-    if (reminder_type === "miles") {
-      due_odometer = Number(prompt("Due at odometer (miles):", String((v.current_odometer ?? 0) + 5000)));
-      if (Number.isNaN(due_odometer)) return alert("Due miles must be a number.");
-    }
-    if (reminder_type === "hours") {
-      due_engine_hours = Number(prompt("Due at engine hours:", String((v.current_engine_hours ?? 0) + 200)));
-      if (Number.isNaN(due_engine_hours)) return alert("Due hours must be a number.");
-    }
-
-    const payload = { vehicle_id: vehicleId, name, reminder_type, due_date, due_odometer, due_engine_hours };
     const { error } = await supabase.from("reminders").insert(payload);
     if (error) return alert(error.message);
 
@@ -386,8 +313,7 @@ async function loadVehicleDetails(vehicleId) {
   };
 
   $("btnDeleteVehicle").onclick = async () => {
-    const ok = confirm(`Delete vehicle "${v.name}"? This will also delete its services and reminders.`);
-    if (!ok) return;
+    if (!confirm(`Delete vehicle "${v.name}"? Services and reminders will also be deleted.`)) return;
 
     const { error } = await supabase.from("vehicles").delete().eq("id", vehicleId);
     if (error) return alert(error.message);
@@ -395,7 +321,6 @@ async function loadVehicleDetails(vehicleId) {
     selectedVehicleId = null;
     $("selectedVehicle").textContent = "Select a vehicle to view details.";
     $("vehicleDetails").style.display = "none";
-
     await refreshAll();
   };
 
@@ -403,26 +328,27 @@ async function loadVehicleDetails(vehicleId) {
   await loadReminders(vehicleId);
 }
 
-/* ================= REFRESH ================= */
+// ===== REFRESH =====
 async function refreshAll() {
-  const isAuthed = await syncAuthUI();
+  const isAuthed = await setAuthUI();
   await loadDashboard();
   if (!isAuthed) return;
   await loadVehicles();
 }
 
-/* ================= INIT ================= */
+// ===== INIT =====
 window.addEventListener("DOMContentLoaded", async () => {
-  await handleMagicLinkCallback();
-
-  $("btnLogin").onclick = login;
+  $("btnSignUp").onclick = signUp;
+  $("btnSignIn").onclick = signIn;
   $("btnLogout").onclick = logout;
+
+  supabase.auth.onAuthStateChange(async () => {
+    await refreshAll();
+  });
 
   $("vehicleForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-
-    const isAuthed = await syncAuthUI();
-    if (!isAuthed) return alert("Please login first.");
+    if (!(await setAuthUI())) return alert("Please login first.");
 
     const f = e.target;
     const payload = {
@@ -436,10 +362,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (error) return alert(error.message);
 
     f.reset();
-    await refreshAll();
-  });
-
-  supabase.auth.onAuthStateChange(async () => {
     await refreshAll();
   });
 
