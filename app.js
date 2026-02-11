@@ -5,7 +5,12 @@ const SUPABASE_URL = "https://vsrdlcafkrubktirwczq.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_NgIiYGeuJFv4x9N9sRrf3A_lRnWdTW9";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: "pkce",
+  },
 });
 
 // ===== HELPERS =====
@@ -18,6 +23,40 @@ function daysUntil(dateStr) {
   const now = new Date();
   const due = new Date(dateStr + "T00:00:00");
   return Math.ceil((due - now) / (1000 * 60 * 60 * 24));
+}
+
+// ===== CALLBACK HANDLING (LOGIN + RECOVERY) =====
+function getHashParams() {
+  return new URLSearchParams(window.location.hash.replace("#", ""));
+}
+
+function isRecovery() {
+  const url = new URL(window.location.href);
+  const hash = getHashParams();
+  // recovery might be in hash OR query
+  return hash.get("type") === "recovery" || url.searchParams.get("type") === "recovery";
+}
+
+function showResetUI(show) {
+  $("resetBox").style.display = show ? "block" : "none";
+}
+
+// If link is PKCE style (?code=...), exchange it for session.
+// Works for login AND recovery links.
+async function handleCodeExchangeIfPresent() {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("code");
+  if (!code) return;
+
+  const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+  if (error) {
+    alert("Auth link failed: " + error.message);
+    return;
+  }
+
+  // clean URL (remove code)
+  url.searchParams.delete("code");
+  window.history.replaceState({}, document.title, url.toString());
 }
 
 // ===== AUTH UI =====
@@ -50,19 +89,6 @@ async function setAuthUI() {
   return isAuthed;
 }
 
-// ===== PASSWORD RESET DETECTION =====
-// Supabase recovery link sets type=recovery in the URL hash.
-// Example: #access_token=...&type=recovery
-function isRecoveryLink() {
-  const hash = new URLSearchParams(window.location.hash.replace("#", ""));
-  return hash.get("type") === "recovery";
-}
-
-function showResetUI(show) {
-  $("resetBox").style.display = show ? "block" : "none";
-}
-
-// ===== AUTH ACTIONS =====
 async function signUp() {
   const email = $("authEmail").value.trim();
   const password = $("authPassword").value;
@@ -90,6 +116,7 @@ async function logout() {
   await refreshAll();
 }
 
+// ===== PASSWORD RESET ACTION =====
 async function updatePassword() {
   const newPass = $("newPassword").value;
   if (!newPass || newPass.length < 6) return alert("Password must be at least 6 characters.");
@@ -100,9 +127,15 @@ async function updatePassword() {
     return;
   }
 
-  $("resetStatus").textContent = "✅ Password updated. You can sign in now.";
-  // Clear hash so it doesn't keep showing reset mode
+  $("resetStatus").textContent = "✅ Password updated. Now you can sign in.";
+  $("newPassword").value = "";
+
+  // Clear hash/query so reset mode doesn't keep showing
   window.location.hash = "";
+  const url = new URL(window.location.href);
+  url.searchParams.delete("type");
+  window.history.replaceState({}, document.title, url.toString());
+
   showResetUI(false);
   await refreshAll();
 }
@@ -122,6 +155,7 @@ async function loadVehicles() {
 
   const wrap = document.createElement("div");
   wrap.className = "list";
+
   (data || []).forEach(v => {
     const el = document.createElement("div");
     el.className = "item";
@@ -200,34 +234,14 @@ async function loadReminders(vehicleId) {
 
   (data || []).forEach(r => {
     let status = "OK";
-    let detail = "";
-
-    if (r.reminder_type === "date" && r.due_date) {
-      const d = daysUntil(r.due_date);
-      detail = `Due: ${fmtDate(r.due_date)} (${d} days)`;
-      if (d <= 0) status = "DUE";
-      else if (d <= (r.warn_days ?? 30)) status = "SOON";
-    }
-    if (r.reminder_type === "miles" && r.due_odometer != null) {
-      const left = r.due_odometer - (v.current_odometer ?? 0);
-      detail = `Due at: ${r.due_odometer} (left: ${left})`;
-      if (left <= 0) status = "DUE";
-      else if (left <= (r.warn_miles ?? 500)) status = "SOON";
-    }
-    if (r.reminder_type === "hours" && r.due_engine_hours != null) {
-      const left = r.due_engine_hours - (v.current_engine_hours ?? 0);
-      detail = `Due at: ${r.due_engine_hours} hrs (left: ${left})`;
-      if (left <= 0) status = "DUE";
-      else if (left <= (r.warn_hours ?? 25)) status = "SOON";
-    }
+    if (r.reminder_type === "date" && r.due_date && daysUntil(r.due_date) <= 0) status = "DUE";
+    if (r.reminder_type === "miles" && r.due_odometer != null && r.due_odometer <= (v.current_odometer ?? 0)) status = "DUE";
+    if (r.reminder_type === "hours" && r.due_engine_hours != null && r.due_engine_hours <= (v.current_engine_hours ?? 0)) status = "DUE";
 
     const row = document.createElement("div");
     row.className = "item";
     row.innerHTML = `
-      <div>
-        <div><b>${r.name}</b> – ${status}</div>
-        <div class="muted">${r.reminder_type.toUpperCase()} • ${detail}</div>
-      </div>
+      <div><b>${r.name}</b> – ${status}</div>
       <div><button class="secondary">Delete</button></div>
     `;
     row.querySelector("button").onclick = () => deleteReminder(r.id);
@@ -249,7 +263,7 @@ async function loadVehicleDetails(vehicleId) {
 
   $("selectedVehicle").innerHTML = `
     <div><b>${v.name}</b> <span class="badge">${v.type}</span></div>
-    <div class="muted">Current Miles: ${v.current_odometer ?? 0} • Engine Hours: ${v.current_engine_hours ?? 0}</div>
+    <div class="muted">Miles: ${v.current_odometer ?? 0} • Hours: ${v.current_engine_hours ?? 0}</div>
   `;
   $("vehicleDetails").style.display = "block";
 
@@ -290,7 +304,7 @@ async function loadVehicleDetails(vehicleId) {
   };
 
   $("btnDeleteVehicle").onclick = async () => {
-    if (!confirm(`Delete vehicle "${v.name}"? Services and reminders will also be deleted.`)) return;
+    if (!confirm(`Delete vehicle "${v.name}"?`)) return;
     const { error } = await supabase.from("vehicles").delete().eq("id", vehicleId);
     if (error) return alert(error.message);
     selectedVehicleId = null;
@@ -305,6 +319,7 @@ async function loadVehicleDetails(vehicleId) {
 
 // ===== REFRESH =====
 async function refreshAll() {
+  showResetUI(isRecovery());
   const isAuthed = await setAuthUI();
   await loadDashboard();
   if (!isAuthed) return;
@@ -313,23 +328,25 @@ async function refreshAll() {
 
 // ===== INIT =====
 window.addEventListener("DOMContentLoaded", async () => {
+  // 1) Process PKCE code links (login/recovery)
+  await handleCodeExchangeIfPresent();
+
+  // 2) Show reset UI if recovery
+  showResetUI(isRecovery());
+
   $("btnSignUp").onclick = signUp;
   $("btnSignIn").onclick = signIn;
   $("btnLogout").onclick = logout;
   $("btnUpdatePassword").onclick = updatePassword;
 
-  // If user came from recovery link, show reset UI
-  showResetUI(isRecoveryLink());
-
   supabase.auth.onAuthStateChange(async () => {
-    // Hide reset box if login state changes
-    showResetUI(isRecoveryLink());
     await refreshAll();
   });
 
   $("vehicleForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!(await setAuthUI())) return alert("Please login first.");
+
     const f = e.target;
     const payload = {
       name: f.name.value.trim(),
@@ -337,8 +354,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       current_odometer: Number(f.current_odometer.value || 0),
       current_engine_hours: Number(f.current_engine_hours.value || 0),
     };
+
     const { error } = await supabase.from("vehicles").insert(payload);
     if (error) return alert(error.message);
+
     f.reset();
     await refreshAll();
   });
