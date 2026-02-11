@@ -23,10 +23,34 @@ function daysUntil(dateStr) {
   return Math.ceil((due - now) / (1000 * 60 * 60 * 24));
 }
 
-// ===== AUTH =====
+// ===== AUTH UI =====
 function setAuthButtons(isAuthed) {
   $("btnLogin").style.display = isAuthed ? "none" : "inline-block";
   $("btnLogout").style.display = isAuthed ? "inline-block" : "none";
+}
+
+// Lock/unlock app controls based on login status
+async function syncAuthUI() {
+  const { data: { session } } = await supabase.auth.getSession();
+  const isAuthed = !!session;
+
+  setAuthButtons(isAuthed);
+
+  // Disable form inputs when logged out
+  const form = $("vehicleForm");
+  form.querySelectorAll("input, button").forEach(el => (el.disabled = !isAuthed));
+
+  if (!isAuthed) {
+    // Hide details and clear private data
+    $("vehicleDetails").style.display = "none";
+    $("selectedVehicle").textContent = "Login to manage vehicles.";
+    $("vehicles").innerHTML = `<div class="muted">Login to view vehicles.</div>`;
+    $("services").innerHTML = "";
+    $("reminders").innerHTML = "";
+    selectedVehicleId = null;
+  }
+
+  return isAuthed;
 }
 
 async function login() {
@@ -47,17 +71,13 @@ async function login() {
 async function logout() {
   await supabase.auth.signOut();
   selectedVehicleId = null;
-  $("selectedVehicle").textContent = "Select a vehicle to view details.";
-  $("vehicleDetails").style.display = "none";
-  await refreshAll();
+  await syncAuthUI();   // ensures UI updates immediately
+  await loadDashboard();
 }
 
 // ===== DASHBOARD =====
 async function loadDashboard() {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
+  const { data: { session } } = await supabase.auth.getSession();
   $("dashboard").innerHTML = session
     ? "<div class='muted'>Logged in. Add vehicles/reminders to track due items.</div>"
     : "<div class='muted'>Login to see reminders.</div>";
@@ -132,14 +152,12 @@ async function loadServices(vehicleId) {
     return;
   }
 
-  // Build DOM so we can attach delete handlers safely
   const wrap = document.createElement("div");
   wrap.className = "list";
 
   (data || []).forEach((s) => {
     const row = document.createElement("div");
     row.className = "item";
-
     row.innerHTML = `
       <div>
         <div><b>${s.category}</b> <span class="badge">${fmtDate(s.service_date)}</span></div>
@@ -150,7 +168,6 @@ async function loadServices(vehicleId) {
         <button class="secondary" data-del-service="${s.id}">Delete</button>
       </div>
     `;
-
     row.querySelector(`[data-del-service="${s.id}"]`).onclick = () => deleteService(s.id);
     wrap.appendChild(row);
   });
@@ -192,37 +209,22 @@ async function loadReminders(vehicleId) {
     if (r.reminder_type === "date" && r.due_date) {
       const d = daysUntil(r.due_date);
       detail = `Due: ${fmtDate(r.due_date)} (${d} days)`;
-      if (d <= 0) {
-        status = "DUE";
-        cls += " red";
-      } else if (d <= (r.warn_days ?? 30)) {
-        status = "SOON";
-        cls += " yellow";
-      }
+      if (d <= 0) { status = "DUE"; cls += " red"; }
+      else if (d <= (r.warn_days ?? 30)) { status = "SOON"; cls += " yellow"; }
     }
 
     if (r.reminder_type === "miles" && r.due_odometer != null) {
       const left = r.due_odometer - (v.current_odometer ?? 0);
       detail = `Due at: ${r.due_odometer} (left: ${left})`;
-      if (left <= 0) {
-        status = "DUE";
-        cls += " red";
-      } else if (left <= (r.warn_miles ?? 500)) {
-        status = "SOON";
-        cls += " yellow";
-      }
+      if (left <= 0) { status = "DUE"; cls += " red"; }
+      else if (left <= (r.warn_miles ?? 500)) { status = "SOON"; cls += " yellow"; }
     }
 
     if (r.reminder_type === "hours" && r.due_engine_hours != null) {
       const left = r.due_engine_hours - (v.current_engine_hours ?? 0);
       detail = `Due at: ${r.due_engine_hours} hrs (left: ${left})`;
-      if (left <= 0) {
-        status = "DUE";
-        cls += " red";
-      } else if (left <= (r.warn_hours ?? 25)) {
-        status = "SOON";
-        cls += " yellow";
-      }
+      if (left <= 0) { status = "DUE"; cls += " red"; }
+      else if (left <= (r.warn_hours ?? 25)) { status = "SOON"; cls += " yellow"; }
     }
 
     const row = document.createElement("div");
@@ -236,7 +238,6 @@ async function loadReminders(vehicleId) {
         <button class="secondary" data-del-reminder="${r.id}">Delete</button>
       </div>
     `;
-
     row.querySelector(`[data-del-reminder="${r.id}"]`).onclick = () => deleteReminder(r.id);
     wrap.appendChild(row);
   });
@@ -247,6 +248,9 @@ async function loadReminders(vehicleId) {
 
 // ===== VEHICLE DETAILS =====
 async function loadVehicleDetails(vehicleId) {
+  const isAuthed = await syncAuthUI();
+  if (!isAuthed) return;
+
   selectedVehicleId = vehicleId;
 
   const { data: v, error } = await supabase
@@ -326,9 +330,7 @@ async function loadVehicleDetails(vehicleId) {
     if (!["date", "miles", "hours"].includes(reminder_type))
       return alert("Type must be: date, miles, or hours");
 
-    let due_date = null,
-      due_odometer = null,
-      due_engine_hours = null;
+    let due_date = null, due_odometer = null, due_engine_hours = null;
 
     if (reminder_type === "date") {
       due_date = prompt("Due date (YYYY-MM-DD):", todayISO());
@@ -359,7 +361,6 @@ async function loadVehicleDetails(vehicleId) {
     await loadDashboard();
   };
 
-  // DELETE VEHICLE
   $("btnDeleteVehicle").onclick = async () => {
     const ok = confirm(`Delete vehicle "${v.name}"? This will also delete its services and reminders.`);
     if (!ok) return;
@@ -381,7 +382,10 @@ async function loadVehicleDetails(vehicleId) {
 
 // ===== REFRESH =====
 async function refreshAll() {
+  const isAuthed = await syncAuthUI();
   await loadDashboard();
+
+  if (!isAuthed) return;
   await loadVehicles();
 }
 
@@ -392,8 +396,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   $("vehicleForm").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const f = e.target;
 
+    const isAuthed = await syncAuthUI();
+    if (!isAuthed) return alert("Please login first.");
+
+    const f = e.target;
     const payload = {
       name: f.name.value.trim(),
       type: f.type.value.trim(),
@@ -408,15 +415,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     await refreshAll();
   });
 
-  supabase.auth.onAuthStateChange((_event, session) => {
-    setAuthButtons(!!session);
-    refreshAll();
+  supabase.auth.onAuthStateChange(async () => {
+    await refreshAll();
   });
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  setAuthButtons(!!session);
   await refreshAll();
 });
