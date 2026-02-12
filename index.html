@@ -10,6 +10,7 @@
   <header class="header">
     <h1>Fleet Service & Reminders</h1>
 
+    <!-- Email + Password Auth -->
     <div class="row wrap" style="gap:10px;">
       <input id="authEmail" placeholder="Email" />
       <input id="authPassword" type="password" placeholder="Password" />
@@ -23,19 +24,9 @@
 
   <main class="container">
 
-    <!-- RESET PASSWORD BOX -->
-    <section id="resetBox" class="card" style="display:none;">
-      <h2>Reset Password</h2>
-      <p class="muted">Enter a new password (min 6 characters).</p>
-      <div class="row wrap" style="gap:10px;">
-        <input id="newPassword" type="password" placeholder="New password" />
-        <button id="btnUpdatePassword">Update Password</button>
-      </div>
-      <div id="resetStatus" class="muted"></div>
-    </section>
-
     <section class="card">
       <h2>Dashboard</h2>
+      <p class="muted">Due Now / Due Soon (Date reminders)</p>
       <div id="dashboard"></div>
     </section>
 
@@ -66,10 +57,16 @@
       <div id="selectedVehicle" class="muted">Select a vehicle to view details.</div>
 
       <div id="vehicleDetails" style="display:none;">
-        <div class="row wrap">
+        <div class="row wrap" style="gap:10px;">
           <button id="btnUpdateMiles" class="secondary">Update Miles / Hours</button>
+          <button id="btnEditVehicle" class="secondary">Edit Vehicle</button>
+
           <button id="btnAddService" class="secondary">Add Service Record</button>
           <button id="btnAddReminder" class="secondary">Add Reminder</button>
+
+          <button id="btnAddDot" class="secondary">Add DOT Inspection</button>
+          <button id="btnAddAnnual" class="secondary">Add Annual Inspection</button>
+
           <button id="btnDeleteVehicle" class="secondary">Delete Vehicle</button>
         </div>
 
