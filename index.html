@@ -10,8 +10,30 @@
 
   <h1>Fleet Reminder System</h1>
 
-  <div id="app"></div>
+  <div id="dashboard"></div>
+
+  <div class="auth">
+    <input id="authEmail" type="email" placeholder="Email">
+    <input id="authPassword" type="password" placeholder="Password">
+    <button id="btnSignIn" type="button">Sign In</button>
+    <button id="btnSignUp" type="button">Sign Up</button>
+    <button id="btnLogout" type="button" style="display:none;">Logout</button>
+    <div id="authStatus" class="muted"></div>
+  </div>
+
+  <form id="vehicleForm">
+    <input id="vehicleName" type="text" placeholder="Vehicle name">
+    <input id="vehiclePlate" type="text" placeholder="Plate">
+    <button type="submit">Add Vehicle</button>
+  </form>
+
+  <div id="vehicles"></div>
+
+  <h2 id="selectedVehicle">Select a vehicle to view details.</h2>
+  <div id="vehicleDetails" style="display:none;">
+    <div id="services"></div>
+    <div id="reminders"></div>
+  </div>
 
 </body>
 </html>
-
